@@ -1,0 +1,125 @@
+---
+title: "COVID19_Analysis3"
+author: "Ben"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Analysis of COVID19 Data
+In this Analysis I have set out to graph and model the relationship between the number of COVID19 tests administered and the number of COVID19 cases. 
+
+
+## **Reading in files**
+The Data is sourced from Johns Hopkins Univervisity and contains number of Covid cases and deaths in different locations in the US and the world. The location data from the US includes Longitude, Latidute and State. Other data points included are FIPS and UID. 
+
+```{r load_libraries}
+library(tidyverse)
+library(lubridate)
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_name <- c("time_series_covid19_confirmed_global.csv")
+url <- str_c(url_in, file_name)
+global_cases <- read_csv(url)
+```
+
+
+```{r new_cases}
+global1 <- global_cases %>%
+  pivot_longer(cols = -c("Province/State",
+                         "Country/Region",
+                         "Lat", "Long"),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c("Lat", "Long", "Province/State"))
+
+colnames(global1)[1] <- "Country"  
+
+global2 <- global1 %>%
+  group_by(Country) %>%
+  mutate(date = mdy(date)) %>%
+  mutate(new_cases = cases - lag(cases)) %>% 
+  filter(new_cases > 0) %>%
+  ungroup()
+```
+
+## **How is the number of COVID tests administered related to the incidence rate?**
+A quick search shows a csv file provided by OurWorldinData.org on the number of tests given worldwide.
+```{r read_tests}
+url2 <- "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/testing/covid-testing-all-observations.csv"
+tests <- read_csv(url2)
+```
+```{r clean_tests}
+tests2 <- tests %>%
+  select("Entity","Date","Daily change in cumulative total", "7-day smoothed daily change" ) %>%
+  separate(col="Entity", into = c("Country", "xxx"), sep=" - ") %>%
+  select(-"xxx")
+
+colnames(tests2)[4] <- "daily_cum_diff"  
+colnames(tests2)[3] <- "week_smooth"
+colnames(tests2)[2] <- "date"
+
+test_global <- full_join(tests2, global2, by=c("Country", "date"))
+```
+```{r view_cases}
+country <- "Italy"
+
+test_global %>%
+  filter(Country == country) %>%
+  ggplot(aes(x=date)) +
+  geom_line(aes(y=new_cases, colour="new_cases")) +
+  geom_line(aes(y=daily_cum_diff, colour="daily_cum_diff")) +
+  ylab("number of tests/cases") +
+  labs(title=str_c("COVID19 Tests and Cases in ", country)) +
+  scale_color_discrete(name = "Legend", labels = c("Tests", "Cases"))
+```
+It is clear from this graph that there is a relationship between the number of tests done and the number of COVID19 cases. To test this I tried to fit a linear model below.
+
+**Linear Model** To fit the data I filtered out NA values.
+```{r linear_pred}
+country = "Italy"
+country_pred <- na.omit(test_global) %>%
+  filter(Country==country)
+
+mod <- lm(new_cases ~ daily_cum_diff, data = country_pred)
+summary(mod)
+
+test_pred <- country_pred %>% 
+  mutate(pred = predict(mod))
+```
+```{r view_pred}
+test_pred %>%
+  ggplot(aes(x=date)) +
+  geom_line(aes(y=new_cases, color="cases")) +
+  geom_line(aes(y=daily_cum_diff, color="tests")) +
+  geom_line(aes(y=pred, color="prediction")) +
+  ylab("number of tests/cases") +
+  labs(title=str_c("Prediction Model for number of infections in ", country))
+```
+This shows that there is a linear relationship between number of tests done and how many cases are counted. 
+
+**Bias:** Among the limitations of this model are that the number of tests being administered is not independant from the number of cases - if more people have Covid symptoms, more will get a test and a positive result. Also it is not clear from the test data whether the number of tests counts only the number of people tested or the total tests given (i.e. one person could have taken multiple tests, like Antigen and PCR)
+To show that not all countries have such a nice prediction model I have included another country below. 
+
+```{r linear_pred2}
+country = "Austria"
+country_pred <- na.omit(test_global) %>%
+  filter(Country==country)
+
+mod <- lm(new_cases ~ daily_cum_diff, data = country_pred)
+
+test_pred <- country_pred %>% 
+  mutate(pred = predict(mod))
+
+test_pred %>%
+  ggplot(aes(x=date)) +
+  geom_line(aes(y=new_cases, color="cases")) +
+  geom_line(aes(y=daily_cum_diff, color="tests")) +
+  geom_line(aes(y=pred, color="prediction")) +
+  ylab("number of tests/cases") +
+  labs(title=str_c("Prediction Model for number of infections in ", country))
+```
+
+
